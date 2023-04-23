@@ -9,8 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -449,4 +452,64 @@ func TestWithJSONBodyError(t *testing.T) {
 	_, ok := err.(*MarshalError)
 	assert.True(t, ok, "expected a MarshalError, but got %T", err)
 
+}
+
+func TestWithFile(t *testing.T) {
+	// Create a temporary test file
+	tmpFile, err := ioutil.TempFile("", "testfile-*.txt")
+	assert.NoError(t, err)
+
+	_, err = tmpFile.Write([]byte("test content"))
+	assert.NoError(t, err)
+
+	err = tmpFile.Close()
+	assert.NoError(t, err)
+
+	defer os.Remove(tmpFile.Name())
+
+	// Create a test server to handle the file upload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := r.ParseMultipartForm(32 << 20) // 32MB max memory
+		assert.NoError(t, err)
+
+		file, _, err := r.FormFile("file")
+		assert.NoError(t, err)
+		defer file.Close()
+
+		fileContent, err := ioutil.ReadAll(file)
+		assert.NoError(t, err)
+
+		assert.Equal(t, "test content", string(fileContent))
+	}))
+	defer server.Close()
+
+	// Use the RequestBuilder to send a file
+	rb := NewRequestBuilder("POST", server.URL)
+	rb, err = rb.WithFile("file", tmpFile.Name())
+	assert.NoError(t, err)
+
+	response, err := rb.Send()
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+}
+
+func TestExponentialBackoff(t *testing.T) {
+    baseDelay := 100 * time.Millisecond
+    maxDelay := 10 * time.Second
+    factor := 2.0
+    jitter := 0.2
+
+    for retry := 0; retry < 10; retry++ {
+        delay := ExponentialBackoff(retry)
+
+        minExpectedDelay := float64(baseDelay) * math.Pow(factor, float64(retry))
+        if minExpectedDelay > float64(maxDelay) {
+            minExpectedDelay = float64(maxDelay)
+        }
+        minExpectedDelay -= jitter * minExpectedDelay / 2
+        maxExpectedDelay := minExpectedDelay + jitter*minExpectedDelay
+
+        assert.True(t, float64(delay) >= minExpectedDelay, "ExponentialBackoff(%d) returned %v, expected value between %v and %v", retry, delay, time.Duration(minExpectedDelay), time.Duration(maxExpectedDelay))
+        assert.True(t, float64(delay) <= maxExpectedDelay, "ExponentialBackoff(%d) returned %v, expected value between %v and %v", retry, delay, time.Duration(minExpectedDelay), time.Duration(maxExpectedDelay))
+    }
 }

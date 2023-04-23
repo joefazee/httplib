@@ -10,7 +10,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"math/rand"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
+	"os"
+	"path/filepath"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -246,4 +252,64 @@ func (rb *RequestBuilder) SendAsync() <-chan AsyncResult {
 	}()
 
 	return resultChan
+}
+
+// ExponentialBackoff calculates the backoff duration for retries using exponential backoff strategy
+func ExponentialBackoff(retry int) time.Duration {
+    baseDelay := 100 * time.Millisecond
+    maxDelay := 10 * time.Second
+    factor := 2.0
+    jitter := 0.2
+
+    delay := float64(baseDelay) * math.Pow(factor, float64(retry))
+    if delay > float64(maxDelay) {
+        delay = float64(maxDelay)
+    }
+
+    jitterRange := jitter * delay
+    delay -= jitterRange / 2
+    delay += rand.Float64() * jitterRange
+
+    return time.Duration(delay)
+}
+
+// WithFile adds a file to the request as a multipart form data
+func (rb *RequestBuilder) WithFile(fieldName, filePath string) (*RequestBuilder, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", `form-data; name="`+fieldName+`"; filename="`+filepath.Base(fileInfo.Name())+`"`)
+	h.Set("Content-Type", "application/octet-stream")
+
+	part, err := writer.CreatePart(h)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = io.Copy(part, file)
+	if err != nil {
+		return nil, err
+	}
+
+	err = writer.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	rb.body = body
+	rb.headers["Content-Type"] = writer.FormDataContentType()
+
+	return rb, nil
 }
