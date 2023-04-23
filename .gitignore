@@ -1,0 +1,6 @@
+.idea/
+.DS_Store
+.env*
+bin
+tmp
+build-errors.log
