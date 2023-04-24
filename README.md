@@ -243,6 +243,72 @@ func main() {
 }
 ```
 
+### Chainining request
+
+```go
+package main
+
+import (
+	"fmt"
+	"github.com/joefazee/httplib"
+	"log"
+	"net/http"
+)
+
+type User struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+}
+
+type Todo struct {
+	ID        int    `json:"id"`
+	Title     string `json:"title"`
+	Completed bool   `json:"completed"`
+	UserId    int    `json:"userId"`
+}
+
+func main() {
+	// Create a new GET request to retrieve a user
+	userRB := httplib.NewRequestBuilder("GET", "https://jsonplaceholder.typicode.com/users/1")
+
+	// Send the request and chain another request to retrieve the user's first to-do item
+	response, err := userRB.SendAndChain(func(res *http.Response) (*httplib.RequestBuilder, error) {
+		// Read JSON data from the response into a User struct
+		var user User
+		err := userRB.ReadJSONResponse(res, &user)
+		if err != nil {
+			return nil, err
+		}
+
+		// Print the retrieved user information
+		fmt.Printf("Retrieved User: %+v\n", user)
+
+		// Create a new GET request to retrieve the user's first to-do item
+		todoURL := fmt.Sprintf("https://jsonplaceholder.typicode.com/todos?userId=%d", user.ID)
+		todoRB := httplib.NewRequestBuilder("GET", todoURL)
+
+		return todoRB, nil
+	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer response.Body.Close()
+
+	// Read JSON data from the response into a Todo struct
+	var todos []Todo
+	err = httplib.NewRequestBuilder("", "").ReadJSONResponse(response, &todos)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Print the retrieved to-do item
+	fmt.Printf("Retrieved To-do Item: %+v\n", todos[0])
+}
+```
+
 ### Fetching data with rate limiting and retries:
 
 ```go
